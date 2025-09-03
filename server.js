@@ -24,6 +24,34 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 // Lưu trữ lịch sử chat (trong production nên dùng database)
 const chatHistory = new Map();
 
+// Lưu trữ model preference của từng user
+const userModels = new Map();
+
+// Danh sách models có sẵn
+const AVAILABLE_MODELS = {
+  'flash': {
+    name: 'gemini-1.5-flash',
+    display: '⚡ Flash (Nhanh)',
+    description: 'Phản hồi nhanh, phù hợp chat thường'
+  },
+  'pro': {
+    name: 'gemini-1.5-pro',
+    display: '🧠 Pro (Thông minh)', 
+    description: 'Suy luận sâu, giải toán, lập trình phức tạp'
+  },
+  'flash-2': {
+    name: 'gemini-2.0-flash-exp',
+    display: '🚀 Flash 2.0 (Mới nhất)',
+    description: 'Model mới nhất, cân bằng tốc độ và chất lượng'
+  }
+};
+
+// Hàm lấy model hiện tại của user
+function getUserModel(userId) {
+  const modelKey = userModels.get(userId) || 'flash';
+  return AVAILABLE_MODELS[modelKey];
+}
+
 // Hàm làm sạch markdown cho Zalo
 function cleanMarkdownForZalo(text) {
   return text
@@ -120,7 +148,14 @@ async function downloadImageAsBase64(imageUrl) {
   try {
     const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
     const base64 = Buffer.from(response.data, 'binary').toString('base64');
-    const mimeType = response.headers['content-type'] || 'image/jpeg';
+    let mimeType = response.headers['content-type'] || 'image/jpeg';
+    
+    // Fix MIME type cho Gemini
+    if (mimeType === 'image/jpg') {
+      mimeType = 'image/jpeg';
+    }
+    
+    console.log(`📸 Downloaded image: ${mimeType}, size: ${base64.length} chars`);
     return { base64, mimeType };
   } catch (error) {
     console.error('❌ Lỗi download ảnh:', error.message);
@@ -168,8 +203,12 @@ async function getGeminiResponse(message, userId, imageUrl = null, fileContent =
     // Lấy lịch sử chat của user
     let history = chatHistory.get(userId) || [];
     
+    // Lấy model preference của user
+    const userModel = getUserModel(userId);
+    const currentModel = genAI.getGenerativeModel({ model: userModel.name });
+    
     // Tạo context từ lịch sử chat
-    let contextPrompt = `Bạn là một AI assistant thông minh và hữu ích tên là Gemini Bot. Hãy trả lời bằng tiếng Việt một cách tự nhiên và thân thiện. 
+    let contextPrompt = `Bạn là một AI assistant thông minh và hữu ích tên là Gemini Bot (${userModel.display}). Hãy trả lời bằng tiếng Việt một cách tự nhiên và thân thiện. 
 
 QUAN TRỌNG: Trả lời bằng văn bản thuần túy, KHÔNG sử dụng markdown formatting như **, *, #, backticks, []() vì đây là chat trên Zalo. Sử dụng emoji và ký tự đặc biệt để làm đẹp tin nhắn thay vì markdown.
 
@@ -206,7 +245,8 @@ Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật v
 
 Người dùng đã gửi kèm một hình ảnh. Hãy phân tích ảnh và trả lời câu hỏi dựa trên nội dung ảnh.`;
 
-      result = await model.generateContent([
+      // Sử dụng model hiện tại cho vision
+      result = await currentModel.generateContent([
         prompt,
         {
           inlineData: {
@@ -215,10 +255,10 @@ Người dùng đã gửi kèm một hình ảnh. Hãy phân tích ảnh và tr�
           }
         }
       ]);
-    } else {
-      // Xử lý text thông thường
-      result = await model.generateContent(contextPrompt);
-    }
+          } else {
+        // Xử lý text thông thường
+        result = await currentModel.generateContent(contextPrompt);
+      }
     
     let aiResponse = result.response.text();
     
@@ -277,18 +317,55 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 
 📝 Lệnh hữu ích:
 /help - Xem hướng dẫn
-/clear - Xóa lịch sử chat`);
+/clear - Xóa lịch sử chat
+/model - Xem/chọn AI model`);
 
-      } else if (userMessage.toLowerCase() === '/clear') {
-        chatHistory.delete(userId);
-        await sendZaloMessage(chatId, '🗑️ Đã xóa lịch sử chat. Bắt đầu cuộc trò chuyện mới!');
-        
-              } else if (userMessage.toLowerCase() === '/help') {
+        } else if (userMessage.toLowerCase() === '/clear') {
+          chatHistory.delete(userId);
+          await sendZaloMessage(chatId, '🗑️ Đã xóa lịch sử chat. Bắt đầu cuộc trò chuyện mới!');
+          
+        } else if (userMessage.toLowerCase() === '/model') {
+          // Hiển thị model hiện tại và danh sách
+          const currentModel = getUserModel(userId);
+          let modelList = `🤖 Model hiện tại: ${currentModel.display}\n\n📋 Danh sách models:\n\n`;
+          
+          Object.entries(AVAILABLE_MODELS).forEach(([key, model]) => {
+            const current = userModels.get(userId) === key ? '✅ ' : '   ';
+            modelList += `${current}${model.display}\n   ${model.description}\n   Lệnh: /model ${key}\n\n`;
+          });
+          
+          modelList += `💡 Cách dùng:\n/model - Xem danh sách\n/model flash - Chọn Flash\n/model pro - Chọn Pro`;
+          
+          await sendZaloMessage(chatId, modelList);
+          
+        } else if (userMessage.toLowerCase().startsWith('/model ')) {
+          // Chuyển đổi model
+          const modelKey = userMessage.toLowerCase().replace('/model ', '').trim();
+          
+          if (AVAILABLE_MODELS[modelKey]) {
+            userModels.set(userId, modelKey);
+            const selectedModel = AVAILABLE_MODELS[modelKey];
+            await sendZaloMessage(chatId, `✅ Đã chuyển sang model: ${selectedModel.display}
+
+📝 ${selectedModel.description}
+
+🎯 Từ giờ tôi sẽ sử dụng model này để trả lời bạn!`);
+          } else {
+            const availableKeys = Object.keys(AVAILABLE_MODELS).join(', ');
+            await sendZaloMessage(chatId, `❌ Model không hợp lệ!
+
+📋 Models có sẵn: ${availableKeys}
+
+💡 Ví dụ: /model pro`);
+          }
+          
+        } else if (userMessage.toLowerCase() === '/help') {
           await sendZaloMessage(chatId, `📚 Hướng dẫn sử dụng Gemini Bot:
 
 🔹 **Chat bình thường:** Gửi bất kỳ câu hỏi nào
 🔹 **/start** - Khởi động bot và xem giới thiệu
 🔹 **/clear** - Xóa lịch sử cuộc trò chuyện
+🔹 **/model** - Xem/chọn AI model (Flash/Pro)
 🔹 **/help** - Hiển thị hướng dẫn này
 
 💡 **Ví dụ sử dụng:**
@@ -299,6 +376,10 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • 📸 Gửi ảnh + "Mô tả ảnh này"
 • 📁 Gửi file + "Review code này"
 • 📁 Gửi .txt + "Tóm tắt nội dung"
+
+🤖 **Models AI:**
+• /model pro - Giải toán, lập trình phức tạp
+• /model flash - Chat nhanh, câu hỏi thường
 
 🎯 Bot nhớ ngữ cảnh cuộc trò chuyện để trả lời chính xác hơn!`);
 
