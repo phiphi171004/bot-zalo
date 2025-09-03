@@ -12,7 +12,7 @@
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
     "body-parser": "^1.20.2",
-    "openai": "^4.20.0"
+    "@google/generative-ai": "^0.21.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

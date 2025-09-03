@@ -1,8 +1,8 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
-const { OpenAI } = require('openai');
-require('dotenv').config({ path: './config.env' });
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,10 +11,9 @@ const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Khởi tạo OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// Khởi tạo Gemini (miễn phí!)
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 // Zalo Bot API Configuration (Official)
 const ZALO_BOT_API_BASE = 'https://bot-api.zapps.me/bot';
@@ -45,11 +44,34 @@ async function setupWebhook() {
       secret_token: SECRET_TOKEN
     });
     
-    console.log('✅ Webhook đã được cấu hình:', response.data);
+    console.log('📡 Webhook response:', response.data);
+    
+    // Kiểm tra kết quả thực tế
+    if (response.data.ok === false) {
+      throw new Error(`Webhook setup failed: ${response.data.description} (${response.data.error_code})`);
+    }
+    
+    console.log('✅ Webhook đã được cấu hình thành công!');
     return response.data;
   } catch (error) {
     console.error('❌ Lỗi cấu hình webhook:', error.response?.data || error.message);
     throw error;
+  }
+}
+
+// Hàm gửi chat action (hiển thị "đang gõ")
+async function sendChatAction(chatId, action = 'typing') {
+  try {
+    const response = await axios.post(`${ZALO_BOT_API_BASE}${BOT_TOKEN}/sendChatAction`, {
+      chat_id: chatId,
+      action: action
+    });
+    
+    console.log('⌨️ Đã gửi chat action:', action);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Lỗi gửi chat action:', error.response?.data || error.message);
+    // Không throw error vì đây chỉ là tính năng phụ
   }
 }
 
@@ -69,42 +91,46 @@ async function sendZaloMessage(chatId, message) {
   }
 }
 
-// Hàm xử lý với ChatGPT
-async function getChatGPTResponse(message, userId) {
+// Hàm xử lý với Gemini (miễn phí!)
+async function getGeminiResponse(message, userId) {
   try {
     // Lấy lịch sử chat của user
     let history = chatHistory.get(userId) || [];
     
-    // Thêm tin nhắn mới vào lịch sử
+    // Tạo context từ lịch sử chat
+    let contextPrompt = `Bạn là một AI assistant thông minh và hữu ích tên là Gemini Bot. Hãy trả lời bằng tiếng Việt một cách tự nhiên và thân thiện. Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật và nhiều việc khác.\n\n`;
+    
+    // Thêm lịch sử chat vào context (giữ 10 tin nhắn gần nhất)
+    if (history.length > 0) {
+      const recentHistory = history.slice(-10);
+      contextPrompt += "Lịch sử cuộc trò chuyện:\n";
+      recentHistory.forEach(msg => {
+        const role = msg.role === 'user' ? 'Người dùng' : 'Bot';
+        contextPrompt += `${role}: ${msg.content}\n`;
+      });
+      contextPrompt += "\n";
+    }
+    
+    contextPrompt += `Câu hỏi hiện tại: ${message}`;
+    
+    // Gọi Gemini API
+    const result = await model.generateContent(contextPrompt);
+    const aiResponse = result.response.text();
+    
+    // Thêm vào lịch sử
     history.push({ role: 'user', content: message });
+    history.push({ role: 'assistant', content: aiResponse });
     
     // Giới hạn lịch sử (giữ 20 tin nhắn gần nhất)
     if (history.length > 20) {
       history = history.slice(-20);
     }
     
-    // Tạo system message
-    const systemMessage = {
-      role: 'system',
-      content: 'Bạn là một AI assistant thông minh và hữu ích. Hãy trả lời bằng tiếng Việt một cách tự nhiên và thân thiện. Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật và nhiều việc khác.'
-    };
-    
-    const response = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [systemMessage, ...history],
-      max_tokens: 1500,
-      temperature: 0.7
-    });
-    
-    const aiResponse = response.choices[0].message.content;
-    
-    // Thêm phản hồi AI vào lịch sử
-    history.push({ role: 'assistant', content: aiResponse });
     chatHistory.set(userId, history);
     
     return aiResponse;
   } catch (error) {
-    console.error('❌ Lỗi ChatGPT API:', error.response?.data || error.message);
+    console.error('❌ Lỗi Gemini API:', error.response?.data || error.message);
     return '🤖 Xin lỗi, tôi đang gặp sự cố kỹ thuật. Vui lòng thử lại sau.';
   }
 }
@@ -114,10 +140,10 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
   try {
     console.log('📨 Nhận webhook:', JSON.stringify(req.body, null, 2));
     
-    const { message, chat } = req.body;
+    const { event_name, message } = req.body;
     
-    if (message && message.text && chat) {
-      const chatId = chat.id;
+    if (event_name === 'message.text.received' && message && message.text) {
+      const chatId = message.chat.id;
       const userId = message.from.id;
       const userMessage = message.text;
       const userName = message.from.display_name || 'Bạn';
@@ -128,7 +154,7 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
       if (userMessage.toLowerCase() === '/start') {
         await sendZaloMessage(chatId, `Xin chào ${userName}! 👋
 
-🤖 Tôi là ChatGPT Bot trên Zalo. Tôi có thể:
+🤖 Tôi là Gemini Bot trên Zalo. Tôi có thể:
 • Trả lời câu hỏi về mọi chủ đề
 • Viết và giải thích code
 • Dịch thuật đa ngôn ngữ  
@@ -136,7 +162,7 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • Sáng tạo nội dung
 • Và nhiều thứ khác!
 
-💡 Hãy chat bình thường với tôi như ChatGPT nhé!
+💡 Hãy chat bình thường với tôi như ChatGPT nhé! (Powered by Google Gemini)
 
 📝 Lệnh hữu ích:
 /help - Xem hướng dẫn
@@ -146,8 +172,8 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
         chatHistory.delete(userId);
         await sendZaloMessage(chatId, '🗑️ Đã xóa lịch sử chat. Bắt đầu cuộc trò chuyện mới!');
         
-      } else if (userMessage.toLowerCase() === '/help') {
-        await sendZaloMessage(chatId, `📚 Hướng dẫn sử dụng ChatGPT Bot:
+              } else if (userMessage.toLowerCase() === '/help') {
+          await sendZaloMessage(chatId, `📚 Hướng dẫn sử dụng Gemini Bot:
 
 🔹 **Chat bình thường:** Gửi bất kỳ câu hỏi nào
 🔹 **/start** - Khởi động bot và xem giới thiệu
@@ -162,10 +188,11 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 
 🎯 Bot nhớ ngữ cảnh cuộc trò chuyện để trả lời chính xác hơn!`);
 
-      } else {
-        // Gửi tin nhắn đến ChatGPT và trả lời
-        console.log('🤖 Đang xử lý với ChatGPT...');
-        const aiResponse = await getChatGPTResponse(userMessage, userId);
+        } else {
+          // Gửi tin nhắn đến Gemini và trả lời
+          console.log('🤖 Đang xử lý với Gemini...');
+          await sendChatAction(chatId, 'typing'); // Hiển thị "đang gõ"
+          const aiResponse = await getGeminiResponse(userMessage, userId);
         
         // Chia nhỏ tin nhắn nếu quá dài (Zalo giới hạn ~2000 ký tự)
         const maxLength = parseInt(process.env.MAX_MESSAGE_LENGTH) || 2000;
@@ -202,7 +229,7 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     webhook_url: WEBHOOK_URL,
     bot_token_configured: !!BOT_TOKEN,
-    openai_configured: !!process.env.OPENAI_API_KEY
+    gemini_configured: !!process.env.GEMINI_API_KEY
   });
 });
 
@@ -233,7 +260,7 @@ app.listen(PORT, async () => {
   console.log(`📱 Webhook URL: ${WEBHOOK_URL}`);
   console.log(`🔑 Bot Token: ${BOT_TOKEN ? 'Đã cấu hình' : 'Chưa cấu hình'}`);
   console.log(`🔐 Secret Token: ${SECRET_TOKEN ? 'Đã cấu hình' : 'Chưa cấu hình'}`);
-  console.log(`🤖 OpenAI API: ${process.env.OPENAI_API_KEY ? 'Đã cấu hình' : 'Chưa cấu hình'}`);
+  console.log(`🤖 Gemini API: ${process.env.GEMINI_API_KEY ? 'Đã cấu hình' : 'Chưa cấu hình'}`);
   
   // Tự động setup webhook khi khởi động
   if (WEBHOOK_URL && BOT_TOKEN && SECRET_TOKEN) {
