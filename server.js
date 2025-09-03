@@ -128,8 +128,42 @@ async function downloadImageAsBase64(imageUrl) {
   }
 }
 
+// Hàm download file và đọc nội dung
+async function downloadFileContent(fileUrl, fileName) {
+  try {
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data);
+    const mimeType = response.headers['content-type'];
+    
+    // Chỉ xử lý text files
+    const textMimeTypes = [
+      'text/plain',
+      'text/csv',
+      'application/json',
+      'text/javascript',
+      'text/html',
+      'text/css',
+      'application/javascript'
+    ];
+    
+    const textExtensions = ['.txt', '.md', '.js', '.py', '.html', '.css', '.json', '.csv', '.xml', '.yml', '.yaml'];
+    const isTextFile = textMimeTypes.includes(mimeType) || 
+                      textExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+    
+    if (isTextFile) {
+      const content = buffer.toString('utf8');
+      return { content, mimeType, isText: true };
+    } else {
+      return { content: null, mimeType, isText: false };
+    }
+  } catch (error) {
+    console.error('❌ Lỗi download file:', error.message);
+    throw error;
+  }
+}
+
 // Hàm xử lý với Gemini (miễn phí!)
-async function getGeminiResponse(message, userId, imageUrl = null) {
+async function getGeminiResponse(message, userId, imageUrl = null, fileContent = null) {
   try {
     // Lấy lịch sử chat của user
     let history = chatHistory.get(userId) || [];
@@ -152,6 +186,11 @@ Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật v
         contextPrompt += `${role}: ${msg.content}\n`;
       });
       contextPrompt += "\n";
+    }
+    
+    // Thêm nội dung file nếu có
+    if (fileContent) {
+      contextPrompt += `\nNội dung file người dùng gửi:\n---\n${fileContent}\n---\n\n`;
     }
     
     contextPrompt += `Câu hỏi hiện tại: ${message}`;
@@ -231,6 +270,7 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • Giải thích kiến thức phức tạp
 • Sáng tạo nội dung
 • 📸 Phân tích và mô tả ảnh
+• 📁 Đọc và phân tích file text/code
 • Và nhiều thứ khác!
 
 💡 Hãy chat bình thường với tôi như ChatGPT nhé! (Powered by Google Gemini)
@@ -257,7 +297,8 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • "Dịch sang tiếng Anh: Xin chào"
 • "Tóm tắt cuốn sách Sapiens"
 • 📸 Gửi ảnh + "Mô tả ảnh này"
-• 📸 Gửi ảnh + "Ảnh này có gì?"
+• 📁 Gửi file + "Review code này"
+• 📁 Gửi .txt + "Tóm tắt nội dung"
 
 🎯 Bot nhớ ngữ cảnh cuộc trò chuyện để trả lời chính xác hơn!`);
 
@@ -295,6 +336,48 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
         } catch (error) {
           console.error('❌ Lỗi xử lý ảnh:', error);
           await sendZaloMessage(chatId, '🖼️ Xin lỗi, tôi không thể phân tích ảnh này. Vui lòng thử lại sau.');
+        }
+      }
+      // Xử lý tin nhắn có file
+      else if (event_name === 'message.file.received' && message && message.file) {
+        const chatId = message.chat.id;
+        const userId = message.from.id;
+        const userName = message.from.display_name || 'Bạn';
+        const fileUrl = message.file.url;
+        const fileName = message.file.name || 'file';
+        const caption = message.caption || 'Phân tích file này giúp tôi';
+        
+        console.log(`📁 Tin nhắn file từ ${userName} (${userId}): ${fileName}`);
+        console.log(`🔗 URL file: ${fileUrl}`);
+        
+        try {
+          // Hiển thị "đang gõ"
+          await sendChatAction(chatId, 'typing');
+          
+          // Download và đọc file
+          console.log('📖 Đang đọc nội dung file...');
+          const fileData = await downloadFileContent(fileUrl, fileName);
+          
+          if (fileData.isText) {
+            // File text - gửi cho Gemini phân tích
+            console.log('🤖 Đang phân tích file với Gemini...');
+            const aiResponse = await getGeminiResponse(caption, userId, null, fileData.content);
+            await sendZaloMessage(chatId, `📁 ${aiResponse}`);
+          } else {
+            // File binary - không thể đọc
+            await sendZaloMessage(chatId, `📁 File "${fileName}" không thể đọc được. 
+
+🤖 Tôi chỉ có thể đọc các file text như:
+• .txt, .md (văn bản)
+• .js, .py, .html (code)
+• .json, .csv (dữ liệu)
+• .xml, .yml (config)
+
+📸 Hoặc bạn có thể chụp ảnh file để tôi phân tích!`);
+          }
+        } catch (error) {
+          console.error('❌ Lỗi xử lý file:', error);
+          await sendZaloMessage(chatId, '📁 Xin lỗi, tôi không thể đọc file này. Vui lòng thử lại sau.');
         }
       }
       
