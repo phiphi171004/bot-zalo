@@ -51,14 +51,14 @@ const FALLBACK_MODELS = ['gemini-1.5-flash-8b', 'gemini-1.5-flash', 'gemini-1.5-
 
 // Hàm lấy model hiện tại của user
 function getUserModel(userId, taskType = 'text') {
-  const modelKey = userModels.get(userId) || 'flash';
+  const modelKey = userModels.get(userId) || 'auto';
   
-  // Nếu chế độ AUTO, chọn model phù hợp
+  // Nếu chế độ AUTO, chỉ dùng các model nhanh
   if (modelKey === 'auto') {
     if (taskType === 'image') {
       return AVAILABLE_MODELS['flash']; // Flash tốt cho vision
     } else if (taskType === 'math' || taskType === 'code') {
-      return AVAILABLE_MODELS['pro']; // Pro tốt cho logic
+      return AVAILABLE_MODELS['flash-8b']; // Flash 8B ổn định cho logic
     } else {
       return AVAILABLE_MODELS['flash']; // Flash cho chat thường
     }
@@ -361,7 +361,7 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
             modelList += `${current}${model.display}\n   ${model.description}\n   Lệnh: /model ${key}\n\n`;
           });
           
-          modelList += `💡 Cách dùng:\n/model auto - Tự động (khuyến nghị)\n/model pro - Toán/Code phức tạp\n/model flash - Chat nhanh`;
+          modelList += `💡 Cách dùng:\n/model auto - Tự động NHANH (khuyến nghị)\n/model flash - Luôn dùng Flash\n/model pro - Thông minh nhưng CHẬM`;
           
           await sendZaloMessage(chatId, modelList);
           
@@ -373,10 +373,12 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
             userModels.set(userId, 'auto');
             await sendZaloMessage(chatId, `🎯 Đã bật chế độ AUTO!
 
-🤖 Bot sẽ tự động chọn model phù hợp:
-• 📸 Ảnh → Flash (nhanh, tốt cho vision)
-• 🧮 Toán/Code → Pro (suy luận sâu)
+🤖 Bot sẽ tự động chọn model NHANH:
+• 📸 Ảnh → Flash (tốt cho vision)
+• 🧮 Toán/Code → Flash 8B (ổn định)
 • 💬 Chat thường → Flash (nhanh)
+
+⚡ Chỉ dùng model nhanh, không dùng Pro để tránh chậm!
 
 /model để xem chi tiết`);
           } else if (AVAILABLE_MODELS[modelKey]) {
@@ -416,8 +418,9 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • 📋 Paste code + "Tìm lỗi: [code]"
 
 🤖 **Models AI:**
-• /model pro - Giải toán, lập trình phức tạp
-• /model flash - Chat nhanh, câu hỏi thường
+• /model auto - Tự động chọn (khuyến nghị)
+• /model flash - Chat nhanh
+• /model pro - Thông minh (chậm hơn)
 
 🎯 Bot nhớ ngữ cảnh cuộc trò chuyện để trả lời chính xác hơn!`);
 
