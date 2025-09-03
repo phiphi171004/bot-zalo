@@ -313,11 +313,11 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
         }
       }
       // Xử lý tin nhắn có ảnh
-      else if (event_name === 'message.photo.received' && message && message.photo) {
+      else if (event_name === 'message.image.received' && message && message.photo_url) {
         const chatId = message.chat.id;
         const userId = message.from.id;
         const userName = message.from.display_name || 'Bạn';
-        const imageUrl = message.photo.url;
+        const imageUrl = message.photo_url;
         const caption = message.caption || 'Phân tích ảnh này giúp tôi';
         
         console.log(`🖼️ Tin nhắn ảnh từ ${userName} (${userId}): ${caption}`);
