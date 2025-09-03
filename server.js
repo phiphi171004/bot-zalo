@@ -385,7 +385,7 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
       if (userMessage.toLowerCase() === '/start') {
         await sendZaloMessage(chatId, `Xin chào ${userName}! 👋
 
-🤖 Tôi là Gemini Bot trên Zalo. Tôi có thể:
+🤖 Tôi là Chat Bot trên Zalo. Tôi có thể:
 • Trả lời câu hỏi về mọi chủ đề
 • Viết và giải thích code
 • Dịch thuật đa ngôn ngữ  
@@ -395,7 +395,7 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • 📋 Phân tích text/code được paste
 • Và nhiều thứ khác!
 
-💡 Hãy chat bình thường với tôi như ChatGPT nhé! (Powered by Google Gemini)
+💡 Hãy chat bình thường với tôi như ChatGPT nhé! (Powered by Phi Phi)
 
 📝 Lệnh hữu ích:
 /help - Xem hướng dẫn
