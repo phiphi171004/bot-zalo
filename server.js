@@ -24,6 +24,30 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 // Lưu trữ lịch sử chat (trong production nên dùng database)
 const chatHistory = new Map();
 
+// Hàm làm sạch markdown cho Zalo
+function cleanMarkdownForZalo(text) {
+  return text
+    // Xóa markdown formatting
+    .replace(/\*\*(.*?)\*\*/g, '$1')  // **bold** → bold
+    .replace(/\*(.*?)\*/g, '$1')      // *italic* → italic
+    .replace(/`(.*?)`/g, '$1')        // `code` → code
+    .replace(/#{1,6}\s/g, '')         // # headers → text
+    .replace(/^\s*[-*+]\s/gm, '• ')   // - list → • list
+    .replace(/^\s*\d+\.\s/gm, '• ')   // 1. numbered → • list
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // [text](link) → text
+    .replace(/```[\s\S]*?```/g, (match) => {
+      // Xử lý code blocks
+      return match
+        .replace(/```\w*\n?/g, '')  // Xóa ```
+        .replace(/```/g, '')        // Xóa ```
+        .trim();
+    })
+    // Làm sạch whitespace thừa
+    .replace(/\n{3,}/g, '\n\n')       // Giảm line breaks thừa
+    .replace(/^\s+|\s+$/g, '')        // Trim đầu cuối
+    .trim();
+}
+
 // Middleware xác thực secret token từ Zalo
 function verifyZaloRequest(req, res, next) {
   const receivedToken = req.headers['x-bot-api-secret-token'];
@@ -98,7 +122,13 @@ async function getGeminiResponse(message, userId) {
     let history = chatHistory.get(userId) || [];
     
     // Tạo context từ lịch sử chat
-    let contextPrompt = `Bạn là một AI assistant thông minh và hữu ích tên là Gemini Bot. Hãy trả lời bằng tiếng Việt một cách tự nhiên và thân thiện. Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật và nhiều việc khác.\n\n`;
+    let contextPrompt = `Bạn là một AI assistant thông minh và hữu ích tên là Gemini Bot. Hãy trả lời bằng tiếng Việt một cách tự nhiên và thân thiện. 
+
+QUAN TRỌNG: Trả lời bằng văn bản thuần túy, KHÔNG sử dụng markdown formatting như **, *, #, backticks, []() vì đây là chat trên Zalo. Sử dụng emoji và ký tự đặc biệt để làm đẹp tin nhắn thay vì markdown.
+
+Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật và nhiều việc khác.
+
+`;
     
     // Thêm lịch sử chat vào context (giữ 10 tin nhắn gần nhất)
     if (history.length > 0) {
@@ -115,7 +145,10 @@ async function getGeminiResponse(message, userId) {
     
     // Gọi Gemini API
     const result = await model.generateContent(contextPrompt);
-    const aiResponse = result.response.text();
+    let aiResponse = result.response.text();
+    
+    // Làm sạch format markdown cho Zalo
+    aiResponse = cleanMarkdownForZalo(aiResponse);
     
     // Thêm vào lịch sử
     history.push({ role: 'user', content: message });
