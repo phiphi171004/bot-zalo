@@ -149,16 +149,67 @@ async function sendChatAction(chatId, action = 'typing') {
   }
 }
 
-// Hàm gửi tin nhắn đến Zalo (Bot API)
+// Hàm gửi tin nhắn đến Zalo (Bot API) - với giới hạn 2000 ký tự
 async function sendZaloMessage(chatId, message) {
+  const MAX_LENGTH = 2000;
+  
   try {
-    const response = await axios.post(`${ZALO_BOT_API_BASE}${BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId,
-      text: message
-    });
+    // Nếu tin nhắn ngắn hơn 2000 ký tự, gửi bình thường
+    if (message.length <= MAX_LENGTH) {
+      const response = await axios.post(`${ZALO_BOT_API_BASE}${BOT_TOKEN}/sendMessage`, {
+        chat_id: chatId,
+        text: message
+      });
+      
+      console.log('✅ Đã gửi tin nhắn thành công:', response.data);
+      return response.data;
+    }
     
-    console.log('✅ Đã gửi tin nhắn thành công:', response.data);
-    return response.data;
+    // Nếu tin nhắn dài hơn 2000 ký tự, chia thành nhiều phần
+    console.log(`📝 Tin nhắn dài (${message.length} ký tự), chia thành nhiều phần...`);
+    
+    const parts = [];
+    let currentPart = '';
+    const lines = message.split('\n');
+    
+    for (const line of lines) {
+      // Nếu thêm line này vượt quá 2000 ký tự, lưu phần hiện tại và bắt đầu phần mới
+      if ((currentPart + line + '\n').length > MAX_LENGTH) {
+        if (currentPart.trim()) {
+          parts.push(currentPart.trim());
+        }
+        currentPart = line + '\n';
+      } else {
+        currentPart += line + '\n';
+      }
+    }
+    
+    // Thêm phần cuối cùng
+    if (currentPart.trim()) {
+      parts.push(currentPart.trim());
+    }
+    
+    console.log(`📤 Gửi ${parts.length} phần tin nhắn...`);
+    
+    // Gửi từng phần
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      console.log(`📤 Gửi phần ${i + 1}/${parts.length} (${part.length} ký tự)`);
+      
+      const response = await axios.post(`${ZALO_BOT_API_BASE}${BOT_TOKEN}/sendMessage`, {
+        chat_id: chatId,
+        text: part
+      });
+      
+      // Đợi 500ms giữa các tin nhắn để tránh spam
+      if (i < parts.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
+    console.log('✅ Đã gửi tất cả phần tin nhắn thành công');
+    return { ok: true, parts_sent: parts.length };
+    
   } catch (error) {
     console.error('❌ Lỗi khi gửi tin nhắn:', error.response?.data || error.message);
     throw error;
