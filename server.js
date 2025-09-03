@@ -70,6 +70,10 @@ function getUserModel(userId, taskType = 'text') {
 // Hàm làm sạch markdown cho Zalo
 function cleanMarkdownForZalo(text) {
   return text
+    // Xóa câu chào tự động từ Gemini
+    .replace(/^🔥\s*Gemini\s*Bot\s*đây!?\s*😊?\s*\n?/i, '')  // Xóa "🔥 Gemini Bot đây! 😊"
+    .replace(/^Xin\s*chào!?\s*Tôi\s*là\s*Gemini\s*Bot\s*[.!]?\s*\n?/i, '')  // Xóa "Xin chào! Tôi là Gemini Bot."
+    .replace(/^Chào\s*bạn!?\s*Tôi\s*là\s*Gemini\s*Bot\s*[.!]?\s*\n?/i, '')  // Xóa "Chào bạn! Tôi là Gemini Bot."
     // Xóa markdown formatting
     .replace(/\*\*(.*?)\*\*/g, '$1')  // **bold** → bold
     .replace(/\*(.*?)\*/g, '$1')      // *italic* → italic
@@ -200,7 +204,10 @@ async function getGeminiResponse(message, userId, imageUrl = null) {
     // Tạo context từ lịch sử chat
     let contextPrompt = `Bạn là một AI assistant thông minh và hữu ích tên là Gemini Bot (${userModel.display}). Hãy trả lời bằng tiếng Việt một cách tự nhiên và thân thiện. 
 
-QUAN TRỌNG: Trả lời bằng văn bản thuần túy, KHÔNG sử dụng markdown formatting như **, *, #, backticks, []() vì đây là chat trên Zalo. Sử dụng emoji và ký tự đặc biệt để làm đẹp tin nhắn thay vì markdown.
+QUAN TRỌNG: 
+1. Trả lời bằng văn bản thuần túy, KHÔNG sử dụng markdown formatting như **, *, #, backticks, []() vì đây là chat trên Zalo. Sử dụng emoji và ký tự đặc biệt để làm đẹp tin nhắn thay vì markdown.
+2. KHÔNG tự thêm "🔥 Gemini Bot đây! 😊" hoặc bất kỳ câu chào nào vào đầu câu trả lời.
+3. Trả lời trực tiếp vào nội dung, không cần giới thiệu bản thân.
 
 Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật và nhiều việc khác.
 
