@@ -67,31 +67,34 @@ function getUserModel(userId, taskType = 'text') {
   return AVAILABLE_MODELS[modelKey];
 }
 
-// Hàm làm sạch markdown cho Zalo
+// Hàm làm sạch markdown cho Zalo và định dạng code
 function cleanMarkdownForZalo(text) {
   return text
     // Xóa câu chào tự động từ Gemini
     .replace(/^🔥\s*Gemini\s*Bot\s*đây!?\s*😊?\s*\n?/i, '')  // Xóa "🔥 Gemini Bot đây! 😊"
     .replace(/^Xin\s*chào!?\s*Tôi\s*là\s*Gemini\s*Bot\s*[.!]?\s*\n?/i, '')  // Xóa "Xin chào! Tôi là Gemini Bot."
     .replace(/^Chào\s*bạn!?\s*Tôi\s*là\s*Gemini\s*Bot\s*[.!]?\s*\n?/i, '')  // Xóa "Chào bạn! Tôi là Gemini Bot."
-    // Xóa markdown formatting
-    .replace(/\*\*(.*?)\*\*/g, '$1')  // **bold** → bold
-    .replace(/\*(.*?)\*/g, '$1')      // *italic* → italic
-    .replace(/`(.*?)`/g, '$1')        // `code` → code
-    .replace(/#{1,6}\s/g, '')         // # headers → text
-    .replace(/^\s*[-*+]\s/gm, '• ')   // - list → • list
-    .replace(/^\s*\d+\.\s/gm, '• ')   // 1. numbered → • list
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // [text](link) → text
-    .replace(/```[\s\S]*?```/g, (match) => {
-      // Xử lý code blocks
-      return match
-        .replace(/```\w*\n?/g, '')  // Xóa ```
-        .replace(/```/g, '')        // Xóa ```
-        .trim();
+    
+    // Xử lý code blocks trước
+    .replace(/```(\w+)?\n?([\s\S]*?)```/g, (match, lang, code) => {
+      const language = lang || 'code';
+      return `\n📝 CODE (${language.toUpperCase()}):\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${code.trim()}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     })
+    
+    // Xử lý inline code
+    .replace(/`([^`]+)`/g, '📄 $1')
+    
+    // Xóa markdown formatting khác
+    .replace(/\*\*(.*?)\*\*/g, '🔸 $1')  // **bold** → 🔸 bold
+    .replace(/\*(.*?)\*/g, '• $1')      // *italic* → • italic
+    .replace(/#{1,6}\s/g, '📌 ')         // # headers → 📌 text
+    .replace(/^\s*[-*+]\s/gm, '• ')     // - list → • list
+    .replace(/^\s*\d+\.\s/gm, '• ')     // 1. numbered → • list
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '🔗 $1') // [text](link) → 🔗 text
+    
     // Làm sạch whitespace thừa
-    .replace(/\n{3,}/g, '\n\n')       // Giảm line breaks thừa
-    .replace(/^\s+|\s+$/g, '')        // Trim đầu cuối
+    .replace(/\n{3,}/g, '\n\n')         // Giảm line breaks thừa
+    .replace(/^\s+|\s+$/g, '')          // Trim đầu cuối
     .trim();
 }
 
@@ -208,6 +211,10 @@ QUAN TRỌNG:
 1. Trả lời bằng văn bản thuần túy, KHÔNG sử dụng markdown formatting như **, *, #, backticks, []() vì đây là chat trên Zalo. Sử dụng emoji và ký tự đặc biệt để làm đẹp tin nhắn thay vì markdown.
 2. KHÔNG tự thêm "🔥 Gemini Bot đây! 😊" hoặc bất kỳ câu chào nào vào đầu câu trả lời.
 3. Trả lời trực tiếp vào nội dung, không cần giới thiệu bản thân.
+4. Khi viết code, sử dụng định dạng rõ ràng:
+   - Code blocks: \`\`\`language\ncode\n\`\`\`
+   - Inline code: \`code\`
+   - Giải thích trước và sau code để dễ hiểu
 
 Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật và nhiều việc khác.
 
