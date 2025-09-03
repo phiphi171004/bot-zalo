@@ -115,8 +115,21 @@ async function sendZaloMessage(chatId, message) {
   }
 }
 
+// Hàm download ảnh từ URL
+async function downloadImageAsBase64(imageUrl) {
+  try {
+    const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    const base64 = Buffer.from(response.data, 'binary').toString('base64');
+    const mimeType = response.headers['content-type'] || 'image/jpeg';
+    return { base64, mimeType };
+  } catch (error) {
+    console.error('❌ Lỗi download ảnh:', error.message);
+    throw error;
+  }
+}
+
 // Hàm xử lý với Gemini (miễn phí!)
-async function getGeminiResponse(message, userId) {
+async function getGeminiResponse(message, userId, imageUrl = null) {
   try {
     // Lấy lịch sử chat của user
     let history = chatHistory.get(userId) || [];
@@ -144,7 +157,30 @@ Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật v
     contextPrompt += `Câu hỏi hiện tại: ${message}`;
     
     // Gọi Gemini API
-    const result = await model.generateContent(contextPrompt);
+    let result;
+    if (imageUrl) {
+      // Xử lý với ảnh (Gemini Vision)
+      console.log('🖼️ Phân tích ảnh với Gemini Vision...');
+      const imageData = await downloadImageAsBase64(imageUrl);
+      
+      const prompt = `${contextPrompt}
+
+Người dùng đã gửi kèm một hình ảnh. Hãy phân tích ảnh và trả lời câu hỏi dựa trên nội dung ảnh.`;
+
+      result = await model.generateContent([
+        prompt,
+        {
+          inlineData: {
+            data: imageData.base64,
+            mimeType: imageData.mimeType
+          }
+        }
+      ]);
+    } else {
+      // Xử lý text thông thường
+      result = await model.generateContent(contextPrompt);
+    }
+    
     let aiResponse = result.response.text();
     
     // Làm sạch format markdown cho Zalo
@@ -175,13 +211,14 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
     
     const { event_name, message } = req.body;
     
+    // Xử lý tin nhắn text
     if (event_name === 'message.text.received' && message && message.text) {
       const chatId = message.chat.id;
       const userId = message.from.id;
       const userMessage = message.text;
       const userName = message.from.display_name || 'Bạn';
       
-      console.log(`💬 Tin nhắn từ ${userName} (${userId}): ${userMessage}`);
+      console.log(`💬 Tin nhắn text từ ${userName} (${userId}): ${userMessage}`);
       
       // Xử lý các lệnh đặc biệt
       if (userMessage.toLowerCase() === '/start') {
@@ -193,6 +230,7 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • Dịch thuật đa ngôn ngữ  
 • Giải thích kiến thức phức tạp
 • Sáng tạo nội dung
+• 📸 Phân tích và mô tả ảnh
 • Và nhiều thứ khác!
 
 💡 Hãy chat bình thường với tôi như ChatGPT nhé! (Powered by Google Gemini)
@@ -218,41 +256,54 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • "Viết code Python tính giai thừa"
 • "Dịch sang tiếng Anh: Xin chào"
 • "Tóm tắt cuốn sách Sapiens"
+• 📸 Gửi ảnh + "Mô tả ảnh này"
+• 📸 Gửi ảnh + "Ảnh này có gì?"
 
 🎯 Bot nhớ ngữ cảnh cuộc trò chuyện để trả lời chính xác hơn!`);
 
-        } else {
+                } else {
           // Gửi tin nhắn đến Gemini và trả lời
           console.log('🤖 Đang xử lý với Gemini...');
           await sendChatAction(chatId, 'typing'); // Hiển thị "đang gõ"
           const aiResponse = await getGeminiResponse(userMessage, userId);
-        
-        // Chia nhỏ tin nhắn nếu quá dài (Zalo giới hạn ~2000 ký tự)
-        const maxLength = parseInt(process.env.MAX_MESSAGE_LENGTH) || 2000;
-        if (aiResponse.length > maxLength) {
-          const chunks = aiResponse.match(new RegExp(`.{1,${maxLength}}`, 'g'));
-          for (let i = 0; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            const prefix = i === 0 ? '' : `...(${i + 1}/${chunks.length}) `;
-            await sendZaloMessage(chatId, prefix + chunk);
-            
-            // Delay nhỏ để tránh spam
-            if (i < chunks.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-          }
-        } else {
+          
+          // Gửi trực tiếp, để Zalo tự cắt nếu cần
           await sendZaloMessage(chatId, aiResponse);
         }
       }
+      // Xử lý tin nhắn có ảnh
+      else if (event_name === 'message.photo.received' && message && message.photo) {
+        const chatId = message.chat.id;
+        const userId = message.from.id;
+        const userName = message.from.display_name || 'Bạn';
+        const imageUrl = message.photo.url;
+        const caption = message.caption || 'Phân tích ảnh này giúp tôi';
+        
+        console.log(`🖼️ Tin nhắn ảnh từ ${userName} (${userId}): ${caption}`);
+        console.log(`📸 URL ảnh: ${imageUrl}`);
+        
+        try {
+          // Hiển thị "đang gõ"
+          await sendChatAction(chatId, 'typing');
+          
+          // Phân tích ảnh với Gemini Vision
+          console.log('🤖 Đang phân tích ảnh với Gemini...');
+          const aiResponse = await getGeminiResponse(caption, userId, imageUrl);
+          
+          // Gửi trực tiếp với prefix ảnh
+          await sendZaloMessage(chatId, `🖼️ ${aiResponse}`);
+        } catch (error) {
+          console.error('❌ Lỗi xử lý ảnh:', error);
+          await sendZaloMessage(chatId, '🖼️ Xin lỗi, tôi không thể phân tích ảnh này. Vui lòng thử lại sau.');
+        }
+      }
+      
+      res.status(200).json({ status: 'success' });
+    } catch (error) {
+      console.error('❌ Lỗi xử lý webhook:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
-    
-    res.status(200).json({ status: 'success' });
-  } catch (error) {
-    console.error('❌ Lỗi xử lý webhook:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+  });
 
 // Health check endpoint
 app.get('/health', (req, res) => {
