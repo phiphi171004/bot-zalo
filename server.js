@@ -39,12 +39,15 @@ const AVAILABLE_MODELS = {
     display: '🧠 Pro (Thông minh)', 
     description: 'Suy luận sâu, giải toán, lập trình phức tạp'
   },
-  'flash-2': {
-    name: 'gemini-2.0-flash-exp',
-    display: '🚀 Flash 2.0 (Mới nhất)',
-    description: 'Model mới nhất, cân bằng tốc độ và chất lượng'
+  'flash-8b': {
+    name: 'gemini-1.5-flash-8b',
+    display: '🔥 Flash 8B (Ổn định)',
+    description: 'Model nhẹ, ít bị overload'
   }
 };
+
+// Fallback models khi bị overload
+const FALLBACK_MODELS = ['gemini-1.5-flash-8b', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
 // Hàm lấy model hiện tại của user
 function getUserModel(userId, taskType = 'text') {
@@ -216,31 +219,63 @@ Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật v
     
     contextPrompt += `Câu hỏi hiện tại: ${message}`;
     
-    // Gọi Gemini API
+    // Gọi Gemini API với retry mechanism
     let result;
-    if (imageUrl) {
-      // Xử lý với ảnh (Gemini Vision)
-      console.log('🖼️ Phân tích ảnh với Gemini Vision...');
-      const imageData = await downloadImageAsBase64(imageUrl);
-      
-      const prompt = `${contextPrompt}
+    let attempts = 0;
+    const maxAttempts = 3;
+    
+    while (attempts < maxAttempts) {
+      try {
+        attempts++;
+        
+        // Chọn model (thử fallback nếu không phải lần đầu)
+        let modelToUse = currentModel;
+        if (attempts > 1) {
+          const fallbackModelName = FALLBACK_MODELS[attempts - 2];
+          if (fallbackModelName) {
+            modelToUse = genAI.getGenerativeModel({ model: fallbackModelName });
+            console.log(`🔄 Retry ${attempts} với model: ${fallbackModelName}`);
+          }
+        }
+        
+        if (imageUrl) {
+          // Xử lý với ảnh (Gemini Vision)
+          console.log('🖼️ Phân tích ảnh với Gemini Vision...');
+          const imageData = await downloadImageAsBase64(imageUrl);
+          
+          const prompt = `${contextPrompt}
 
 Người dùng đã gửi kèm một hình ảnh. Hãy phân tích ảnh và trả lời câu hỏi dựa trên nội dung ảnh.`;
 
-      // Sử dụng model hiện tại cho vision
-      result = await currentModel.generateContent([
-        prompt,
-        {
-          inlineData: {
-            data: imageData.base64,
-            mimeType: imageData.mimeType
-          }
+          result = await modelToUse.generateContent([
+            prompt,
+            {
+              inlineData: {
+                data: imageData.base64,
+                mimeType: imageData.mimeType
+              }
+            }
+          ]);
+        } else {
+          // Xử lý text thông thường
+          result = await modelToUse.generateContent(contextPrompt);
         }
-      ]);
-          } else {
-        // Xử lý text thông thường
-        result = await currentModel.generateContent(contextPrompt);
+        
+        // Nếu thành công, thoát loop
+        break;
+        
+      } catch (error) {
+        console.error(`❌ Lỗi attempt ${attempts}:`, error.message);
+        
+        if (attempts >= maxAttempts) {
+          // Hết attempts, throw error
+          throw error;
+        }
+        
+        // Đợi 1-2 giây trước khi retry
+        await new Promise(resolve => setTimeout(resolve, 1000 + (attempts * 500)));
       }
+    }
     
     let aiResponse = result.response.text();
     
