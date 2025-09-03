@@ -27,9 +27,6 @@ const chatHistory = new Map();
 // Lưu trữ model preference của từng user
 const userModels = new Map();
 
-// Lưu trữ file tạm thời của từng user (chờ text command)
-const pendingFiles = new Map();
-
 // Danh sách models có sẵn
 const AVAILABLE_MODELS = {
   'flash': {
@@ -178,42 +175,10 @@ async function downloadImageAsBase64(imageUrl) {
   }
 }
 
-// Hàm download file và đọc nội dung
-async function downloadFileContent(fileUrl, fileName) {
-  try {
-    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-    const buffer = Buffer.from(response.data);
-    const mimeType = response.headers['content-type'];
-    
-    // Chỉ xử lý text files
-    const textMimeTypes = [
-      'text/plain',
-      'text/csv',
-      'application/json',
-      'text/javascript',
-      'text/html',
-      'text/css',
-      'application/javascript'
-    ];
-    
-    const textExtensions = ['.txt', '.md', '.js', '.py', '.html', '.css', '.json', '.csv', '.xml', '.yml', '.yaml'];
-    const isTextFile = textMimeTypes.includes(mimeType) || 
-                      textExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
-    
-    if (isTextFile) {
-      const content = buffer.toString('utf8');
-      return { content, mimeType, isText: true };
-    } else {
-      return { content: null, mimeType, isText: false };
-    }
-  } catch (error) {
-    console.error('❌ Lỗi download file:', error.message);
-    throw error;
-  }
-}
+
 
 // Hàm xử lý với Gemini (miễn phí!)
-async function getGeminiResponse(message, userId, imageUrl = null, fileContent = null) {
+async function getGeminiResponse(message, userId, imageUrl = null) {
   try {
     // Lấy lịch sử chat của user
     let history = chatHistory.get(userId) || [];
@@ -221,7 +186,7 @@ async function getGeminiResponse(message, userId, imageUrl = null, fileContent =
     // Lấy model preference của user (tự động detect task type)
     let taskType = 'text';
     if (imageUrl) taskType = 'image';
-    else if (fileContent && (message.includes('code') || message.includes('lập trình') || message.includes('thuật toán'))) taskType = 'code';
+    else if (message.includes('code') || message.includes('lập trình') || message.includes('thuật toán')) taskType = 'code';
     else if (message.includes('toán') || message.includes('tính') || message.includes('phương trình')) taskType = 'math';
     
     const userModel = getUserModel(userId, taskType);
@@ -247,11 +212,6 @@ Bạn có thể giúp viết code, giải thích kiến thức, dịch thuật v
         contextPrompt += `${role}: ${msg.content}\n`;
       });
       contextPrompt += "\n";
-    }
-    
-    // Thêm nội dung file nếu có
-    if (fileContent) {
-      contextPrompt += `\nNội dung file người dùng gửi:\n---\n${fileContent}\n---\n\n`;
     }
     
     contextPrompt += `Câu hỏi hiện tại: ${message}`;
@@ -331,8 +291,8 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • Dịch thuật đa ngôn ngữ  
 • Giải thích kiến thức phức tạp
 • Sáng tạo nội dung
-• 📸 Phân tích và mô tả ảnh
-• 📁 Đọc và phân tích file text/code
+• 📸 Phân tích ảnh (OCR, mô tả)
+• 📋 Phân tích text/code được paste
 • Và nhiều thứ khác!
 
 💡 Hãy chat bình thường với tôi như ChatGPT nhé! (Powered by Google Gemini)
@@ -344,8 +304,7 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 
         } else if (userMessage.toLowerCase() === '/clear') {
           chatHistory.delete(userId);
-          pendingFiles.delete(userId); // Xóa luôn file pending
-          await sendZaloMessage(chatId, '🗑️ Đã xóa lịch sử chat và file pending. Bắt đầu cuộc trò chuyện mới!');
+          await sendZaloMessage(chatId, '🗑️ Đã xóa lịch sử chat. Bắt đầu cuộc trò chuyện mới!');
           
         } else if (userMessage.toLowerCase() === '/model') {
           // Hiển thị model hiện tại và danh sách
@@ -418,9 +377,8 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 • "Viết code Python tính giai thừa"
 • "Dịch sang tiếng Anh: Xin chào"
 • "Tóm tắt cuốn sách Sapiens"
-• 📸 Gửi ảnh + "Mô tả ảnh này"
-• 📁 Gửi file + "Review code này"
-• 📁 Gửi .txt + "Tóm tắt nội dung"
+• 📸 Chụp ảnh code + "Review code này"
+• 📋 Paste code + "Tìm lỗi: [code]"
 
 🤖 **Models AI:**
 • /model pro - Giải toán, lập trình phức tạp
@@ -429,37 +387,13 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
 🎯 Bot nhớ ngữ cảnh cuộc trò chuyện để trả lời chính xác hơn!`);
 
                 } else {
-          // Kiểm tra có file pending không
-          const pendingFile = pendingFiles.get(userId);
+          // Chat bình thường với Gemini
+          console.log('🤖 Đang xử lý với Gemini...');
+          await sendChatAction(chatId, 'typing');
+          const aiResponse = await getGeminiResponse(userMessage, userId);
           
-          if (pendingFile) {
-            // Có file đang chờ → gộp file + text gửi Gemini
-            console.log(`📁 Xử lý file + text: ${pendingFile.fileName}`);
-            console.log(`💬 Text command: ${userMessage}`);
-            
-            await sendChatAction(chatId, 'typing');
-            
-            try {
-              const aiResponse = await getGeminiResponse(userMessage, userId, null, pendingFile.content);
-              await sendZaloMessage(chatId, `📁 ${aiResponse}`);
-              
-              // Xóa file pending sau khi xử lý
-              pendingFiles.delete(userId);
-              console.log('🗑️ Đã xóa file pending');
-            } catch (error) {
-              console.error('❌ Lỗi xử lý file + text:', error);
-              await sendZaloMessage(chatId, '❌ Lỗi xử lý file. Vui lòng thử lại.');
-              pendingFiles.delete(userId);
-            }
-          } else {
-            // Không có file pending → chat bình thường
-            console.log('🤖 Đang xử lý với Gemini...');
-            await sendChatAction(chatId, 'typing');
-            const aiResponse = await getGeminiResponse(userMessage, userId);
-            
-            // Gửi trực tiếp, để Zalo tự cắt nếu cần
-            await sendZaloMessage(chatId, aiResponse);
-          }
+          // Gửi trực tiếp, để Zalo tự cắt nếu cần
+          await sendZaloMessage(chatId, aiResponse);
         }
       }
       // Xử lý tin nhắn có ảnh
@@ -488,62 +422,32 @@ app.post('/webhook', verifyZaloRequest, async (req, res) => {
           await sendZaloMessage(chatId, '🖼️ Xin lỗi, tôi không thể phân tích ảnh này. Vui lòng thử lại sau.');
         }
       }
-      // Xử lý tin nhắn có file
-      else if (event_name === 'message.file.received' && message && message.file) {
+      // Xử lý message không hỗ trợ (bao gồm file uploads)
+      else if (event_name === 'message.unsupported.received') {
         const chatId = message.chat.id;
         const userId = message.from.id;
         const userName = message.from.display_name || 'Bạn';
-        const fileUrl = message.file.url;
-        const fileName = message.file.name || 'file';
-        const caption = message.caption || 'Phân tích file này giúp tôi';
         
-        console.log(`📁 Tin nhắn file từ ${userName} (${userId}): ${fileName}`);
-        console.log(`🔗 URL file: ${fileUrl}`);
+        console.log(`❌ Tin nhắn không hỗ trợ từ ${userName} (${userId})`);
         
-        try {
-          // Download và đọc file
-          console.log('📖 Đang đọc nội dung file...');
-          const fileData = await downloadFileContent(fileUrl, fileName);
-          
-          if (fileData.isText) {
-            // Lưu file tạm thời, chờ user gửi text command
-            pendingFiles.set(userId, {
-              content: fileData.content,
-              fileName: fileName,
-              fileUrl: fileUrl,
-              timestamp: Date.now()
-            });
-            
-            console.log(`💾 Đã lưu file pending: ${fileName}`);
-            
-            await sendZaloMessage(chatId, `📁 Đã nhận file "${fileName}"!
+        await sendZaloMessage(chatId, `❌ Xin lỗi ${userName}, tôi không hỗ trợ file uploads!
 
-🤖 Giờ hãy gửi câu lệnh để tôi xử lý file:
+🔄 **Thay vào đó:**
 
-💡 Ví dụ:
-• "Review code này"
-• "Tóm tắt nội dung"  
-• "Giải thích file này"
-• "Tìm lỗi trong code"
-• "Dịch file này"
+📸 **Chụp ảnh** thay vì gửi file
+• Chụp màn hình code/document  
+• Gửi ảnh + câu hỏi
+• Tôi sẽ OCR và phân tích
 
-⏱️ File sẽ tự xóa sau 10 phút nếu không sử dụng.`);
-          } else {
-            // File binary - không thể đọc
-            await sendZaloMessage(chatId, `📁 File "${fileName}" không thể đọc được. 
+📋 **Copy-paste text**
+• Copy nội dung cần phân tích
+• Paste vào chat + câu hỏi
 
-🤖 Tôi chỉ có thể đọc các file text như:
-• .txt, .md (văn bản)
-• .js, .py, .html (code)
-• .json, .csv (dữ liệu)
-• .xml, .yml (config)
+💡 **Ví dụ:**
+• Chụp ảnh code → "Review code này"
+• Paste: "Tìm lỗi: function test() {...}"
 
-📸 Hoặc bạn có thể chụp ảnh file để tôi phân tích!`);
-          }
-        } catch (error) {
-          console.error('❌ Lỗi xử lý file:', error);
-          await sendZaloMessage(chatId, '📁 Xin lỗi, tôi không thể đọc file này. Vui lòng thử lại sau.');
-        }
+🤖 Tôi hỗ trợ: TEXT và ẢNH`);
       }
       
       res.status(200).json({ status: 'success' });
@@ -586,18 +490,7 @@ app.post('/test-send', async (req, res) => {
   }
 });
 
-// Tự động xóa file pending sau 10 phút
-setInterval(() => {
-  const now = Date.now();
-  const tenMinutes = 10 * 60 * 1000; // 10 phút
-  
-  for (const [userId, fileData] of pendingFiles.entries()) {
-    if (now - fileData.timestamp > tenMinutes) {
-      pendingFiles.delete(userId);
-      console.log(`🗑️ Tự động xóa file pending của user ${userId} (timeout)`);
-    }
-  }
-}, 60000); // Kiểm tra mỗi phút
+
 
 // Khởi động server và setup webhook
 app.listen(PORT, async () => {
